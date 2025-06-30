@@ -457,3 +457,4 @@ pip install llama-cpp-python --config-settings="--cmake.define=GIT_EXECUTABLE=C:
 
 pip install llama-cpp-python --config-settings "cmake.define.GIT_EXECUTABLE=C:/Program Files/Git/cmd/git.exe"
 
+pip install llama-cpp-python   --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
