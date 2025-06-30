@@ -438,4 +438,19 @@ level: ...
 view: ...
 If not found, say N/A."""
 
+   prompt = f"""
+Extract the following from the sentence below:
+1. metric_name
+2. level
+3. view
+
+Sentence: "{sentence}"
+
+Give the answer in exactly this format:
+metric_name: <value>
+level: <value>
+view: <value>
+
+If a value is not present, write N/A.
+""
 
