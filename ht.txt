@@ -281,6 +281,18 @@ AutoARIMA	72.27	Fully automated but performs poorly due to lack of tuning or dat
 
 
 
+Model	Accuracy (%)	Short Reason (for short, irregular, no-trend data)
+Theta	96.96	Performs well on irregular, short data without strong trend/seasonality.
+ARIMA	96.91	Needs consistent trend or stationarity—poor fit for noisy, irregular metrics.
+RandomForest	96.55	Lacks time-awareness; not ideal for sequence prediction in security data.
+SMA	96.54	Too basic; fails on unpredictable or noisy data.
+SVR	96.21	Struggles with time dependencies; sensitive to irregular patterns.
+Holt	96.04	Needs trend; underperforms when data is flat or noisy.
+LightGBM	95.76	Requires engineered features; weak with raw, short time series.
+Prophet	90.31	Designed for trend/seasonality; fails on short, irregular metrics.
+XGBoost	89.78	Not time-aware; doesn’t suit sparse or unstable time data.
+AutoARIMA	72.27	Fails to auto-tune correctly on short, non-stationary security metrics.
+
 
 
 
