@@ -455,4 +455,5 @@ If a value is not present, write N/A.
 ""
 pip install llama-cpp-python --config-settings="--cmake.define=GIT_EXECUTABLE=C:/Program Files/Git/cmd/git.exe"
 
+pip install llama-cpp-python --config-settings "cmake.define.GIT_EXECUTABLE=C:/Program Files/Git/cmd/git.exe"
 
