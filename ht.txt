@@ -425,4 +425,17 @@ elif model_choice == "AutoARIMA":
 
 import pmdarima as pm
 
+ f"""Extract the following from the sentence:
+- metric_name
+- level
+- view
+
+Sentence: "{sentence}"
+
+Give output as:
+metric_name: ...
+level: ...
+view: ...
+If not found, say N/A."""
+
 
