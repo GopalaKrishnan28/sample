@@ -294,7 +294,135 @@ XGBoost	89.78	Not time-aware; doesn’t suit sparse or unstable time data.
 AutoARIMA	72.27	Fails to auto-tune correctly on short, non-stationary security metrics.
 
 
+To **add a model selection dropdown** in your Streamlit dashboard and dynamically run forecasting based on the selected model (e.g., Theta, ARIMA, Prophet, etc.), you can follow this integration plan:
 
+---
 
+## ✅ **Steps to Add Model Selection in Streamlit Dashboard**
+
+### 🔧 Step 1: Add a model selector
+
+Add this below your existing dropdowns:
+
+```python
+model_choice = st.selectbox("Select Forecasting Model", [
+    "Theta", "ARIMA", "Holt", "Prophet", "SMA", 
+    "RandomForest", "LinearRegression", "SVR", "LightGBM", "XGBoost"
+])
+```
+
+---
+
+### ⚙️ Step 2: Replace `ThetaModel` forecasting block with conditional logic
+
+Replace this:
+
+```python
+model = ThetaModel(train, period=1)
+fit_model = model.fit()
+forecast = fit_model.forecast(steps=steps)
+```
+
+With this:
+
+```python
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from statsmodels.tsa.arima.model import ARIMA
+from prophet import Prophet
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.svm import SVR
+from lightgbm import LGBMRegressor
+from xgboost import XGBRegressor
+
+# Prepare forecasting
+forecast = None
+
+try:
+    if model_choice == "Theta":
+        model = ThetaModel(train, period=1)
+        fit_model = model.fit()
+        forecast = fit_model.forecast(steps=steps)
+
+    elif model_choice == "ARIMA":
+        model = ARIMA(train, order=(2, 2, 2))
+        fit_model = model.fit()
+        forecast = fit_model.forecast(steps=steps)
+
+    elif model_choice == "Holt":
+        model = ExponentialSmoothing(train, trend='add')
+        fit_model = model.fit()
+        forecast = fit_model.forecast(steps=steps)
+
+    elif model_choice == "Prophet":
+        df_prophet = train.reset_index().rename(columns={'ReportingDate': 'ds', 'MetricValue': 'y'})
+        prophet = Prophet()
+        prophet.fit(df_prophet)
+        future = prophet.make_future_dataframe(periods=steps, freq='MS')
+        forecast = prophet.predict(future).iloc[-steps:]['yhat'].values
+
+    elif model_choice == "SMA":
+        sma_value = train.rolling(window=3).mean().iloc[-1]
+        forecast = [sma_value] * steps
+
+    elif model_choice in ["RandomForest", "LinearRegression", "SVR", "LightGBM", "XGBoost"]:
+        df_reset = df.reset_index()
+        df_reset['month'] = df_reset['ReportingDate'].dt.month
+        df_reset['year'] = df_reset['ReportingDate'].dt.year
+        df_reset['t'] = np.arange(len(df_reset))
+
+        X = df_reset[['month', 'year', 't']].values
+        y = df_reset['MetricValue'].values
+        X_train = X
+        y_train = y
+
+        last_t = X_train[-1][2]
+        future_t = np.arange(last_t + 1, last_t + 1 + steps)
+        future_months = [(df.index[-1] + relativedelta(months=i+1)).month for i in range(steps)]
+        future_years = [(df.index[-1] + relativedelta(months=i+1)).year for i in range(steps)]
+        X_future = np.column_stack([future_months, future_years, future_t])
+
+        model_map = {
+            "RandomForest": RandomForestRegressor(),
+            "LinearRegression": LinearRegression(),
+            "SVR": SVR(),
+            "LightGBM": LGBMRegressor(),
+            "XGBoost": XGBRegressor()
+        }
+
+        model = model_map[model_choice]
+        model.fit(X_train, y_train)
+        forecast = model.predict(X_future)
+
+    forecast = np.clip(forecast, 0, 100)
+
+except Exception as e:
+    st.error(f"Forecasting failed for model {model_choice}: {str(e)}")
+    st.stop()
+```
+
+---
+
+### ✅ Benefits
+
+* Dynamic switching between models
+* Easy benchmarking
+* Can plug in model evaluation metrics later (e.g., RMSE, MAPE)
+
+---
+
+Let me know if you want:
+
+* 📉 Add accuracy evaluation (`MAE`, `RMSE`, etc.)
+* 💽 Downloadable forecast CSV
+* 📦 Sidebar filters or caching improvements
+
+Want me to generate the **full merged final code** too?
+
+elif model_choice == "AutoARIMA":
+    model = pm.auto_arima(train, seasonal=False, stepwise=True, suppress_warnings=True)
+    forecast = model.predict(n_periods=steps)
+
+import pmdarima as pm
 
 
