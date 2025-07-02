@@ -549,3 +549,52 @@ This internship helped me grow both technically and professionally. I improved m
 
 Let me know if you'd like this converted into a format suitable for direct form input or PDF.
 
+
+Objective 1: Forecasting Module Development
+Objective:
+Build an accurate forecasting system for security metrics using multiple time series models.
+
+SMART Measures of Success:
+
+Specific: Develop a forecasting pipeline supporting 10+ models (e.g., Theta, ARIMA, LGBM).
+
+Measurable: Achieve at least 95% forecasting accuracy (measured via MAPE).
+
+Achievable: Use cleaned and transformed SQL-based metrics dataset for model training.
+
+Relevant: Forecasting is essential for proactive security posture evaluation.
+
+Time-bound: Complete and deploy forecasting module into dashboard by Week 6.
+
+Evaluation Method:
+
+Use test/train splits on historical data.
+
+Evaluate MAE, RMSE, MAPE for each model.
+
+Compare performance via Streamlit dashboard selection and reports.
+
+Objective 2: Intelligent Chatbot Integration
+Objective:
+Enable users to query and retrieve metric forecasts conversationally through a voice-enabled AI chatbot.
+
+SMART Measures of Success:
+
+Specific: Integrate speech-to-text, keyword extraction (NLP), and forecasting triggers into chatbot.
+
+Measurable: Ensure chatbot correctly answers at least 90% of structured user queries.
+
+Achievable: Use speech_recognition, Spacy, and existing forecasting API/backend logic.
+
+Relevant: Reduces manual navigation and makes metric analysis interactive and accessible.
+
+Time-bound: Complete integration and deploy functional chatbot by Week 7.
+
+Evaluation Method:
+
+Test chatbot on a suite of 15 predefined prompts.
+
+Measure success rate of valid entity extraction and correct forecasting output.
+
+Collect peer/mentor feedback on usability.
+
