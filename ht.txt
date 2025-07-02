@@ -598,3 +598,76 @@ Measure success rate of valid entity extraction and correct forecasting output.
 
 Collect peer/mentor feedback on usability.
 
+Here is the **expanded and enriched version** of both SMART objectives, adding further detail to each point (in total \~20–30 extra words per bullet) to make it suitable for **official evaluation forms, reports, or slide decks**:
+
+---
+
+### **Objective 1: Forecasting Module Development**
+
+**Objective:**
+Design, develop, and deploy a robust forecasting engine that predicts future values of critical security metrics using a range of statistical and machine learning time series models. This will support proactive decision-making and operational resilience.
+
+**SMART Measures of Success:**
+
+* **Specific:**
+  Create a flexible and modular forecasting pipeline capable of running over 10 time series models (Theta, ARIMA, LGBM, Prophet, etc.) to enable comparative performance analysis for different metric types.
+
+* **Measurable:**
+  The models must achieve at least **95% average accuracy** on historical data, as measured through MAPE. Evaluation will include over 30 distinct metrics across multiple levels and views from the security database.
+
+* **Achievable:**
+  Source, clean, and transform metric data from SQL Server tables. Apply feature engineering, normalization, missing data handling, and timestamp parsing to ensure quality inputs for model training and forecasting.
+
+* **Relevant:**
+  Forecasting is vital for identifying potential security performance degradations in advance. This predictive visibility will help decision-makers take preemptive actions before thresholds are breached.
+
+* **Time-bound:**
+  The full module (data ingestion, modeling, visualization, and DB integration) should be developed and deployed into the Streamlit dashboard by **Week 6**, with two rounds of testing and mentor feedback.
+
+**Evaluation Method:**
+
+* Split the dataset into training and test sets (e.g., 80:20) and evaluate each model using MAE, RMSE, and MAPE.
+
+* Track and compare each model’s performance in a tabular format within the dashboard, supported by visual forecast plots and anomaly markers.
+
+* Conduct reviews with mentors/peers after deployment to validate if the forecasts align with known patterns and expectations.
+
+---
+
+### **Objective 2: Intelligent Chatbot Integration**
+
+**Objective:**
+Develop and integrate an intelligent, voice-activated chatbot that enables users to conversationally request and retrieve forecasts for specific security metrics, enhancing accessibility and reducing dashboard complexity.
+
+**SMART Measures of Success:**
+
+* **Specific:**
+  Implement an NLP-driven chatbot that combines speech recognition, text preprocessing, and entity extraction (using `Spacy`) to dynamically trigger forecast generation and display metric results on user command.
+
+* **Measurable:**
+  The chatbot must achieve at least **90% prompt understanding accuracy** across a test set of 15+ predefined prompts and handle at least 3 input variations per prompt.
+
+* **Achievable:**
+  Use available Python tools (`speech_recognition`, `Spacy`, Streamlit components) and integrate directly with the forecasting backend to reuse the logic and provide consistent results in real-time.
+
+* **Relevant:**
+  This solution minimizes manual dropdown selection and navigation, allowing users — especially leadership or non-technical roles — to interact with the platform quickly and intuitively through voice commands.
+
+* **Time-bound:**
+  Completion and deployment of the voice-enabled chatbot should occur by **Week 7**, followed by one week of improvement iterations based on testing feedback and enhancements for stability.
+
+**Evaluation Method:**
+
+* Validate chatbot accuracy using structured prompt testing and verify output correctness against expected forecasts from the dashboard logic.
+
+* Use usability testing with peers or mentors to assess interaction quality, error handling, latency, and clarity of feedback.
+
+* Track response accuracy, bug reports, and interaction metrics in logs and summarize findings for final evaluation.
+
+---
+
+Would you also like:
+
+* A **PowerPoint-friendly table** layout of this content?
+* Or **roles and responsibilities mapping** (e.g., Data Engineer for Objective 1, AI Engineer for Objective 2)?
+
