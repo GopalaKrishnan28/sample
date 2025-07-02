@@ -458,3 +458,94 @@ pip install llama-cpp-python --config-settings="--cmake.define=GIT_EXECUTABLE=C:
 pip install llama-cpp-python --config-settings "cmake.define.GIT_EXECUTABLE=C:/Program Files/Git/cmd/git.exe"
 
 pip install llama-cpp-python   --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+
+
+Here are **two SMART objectives** — one for the **forecasting module** and one for the **chatbot integration** — written in a structured format with clear success measures and evaluation methods:
+
+---
+
+### ✅ **Objective 1: Forecasting Module Development**
+
+* **Objective:**
+  Build an accurate forecasting system for security metrics using multiple time series models.
+
+* **SMART Measures of Success:**
+
+  * **Specific:** Develop a forecasting pipeline supporting 10+ models (e.g., Theta, ARIMA, LGBM).
+  * **Measurable:** Achieve at least **95% forecasting accuracy** (measured via MAPE).
+  * **Achievable:** Use cleaned and transformed SQL-based metrics dataset for model training.
+  * **Relevant:** Forecasting is essential for proactive security posture evaluation.
+  * **Time-bound:** Complete and deploy forecasting module into dashboard by **Week 6**.
+  * **Evaluation Method:**
+
+    * Use test/train splits on historical data.
+    * Evaluate MAE, RMSE, MAPE for each model.
+    * Compare performance via Streamlit dashboard selection and reports.
+
+---
+
+### ✅ **Objective 2: Intelligent Chatbot Integration**
+
+* **Objective:**
+  Enable users to query and retrieve metric forecasts conversationally through a voice-enabled AI chatbot.
+
+* **SMART Measures of Success:**
+
+  * **Specific:** Integrate speech-to-text, keyword extraction (NLP), and forecasting triggers into chatbot.
+  * **Measurable:** Ensure chatbot correctly answers at least **90% of structured user queries**.
+  * **Achievable:** Use `speech_recognition`, `Spacy`, and existing forecasting API/backend logic.
+  * **Relevant:** Reduces manual navigation and makes metric analysis interactive and accessible.
+  * **Time-bound:** Complete integration and deploy functional chatbot by **Week 7**.
+  * **Evaluation Method:**
+
+    * Test chatbot on a suite of 15 predefined prompts.
+    * Measure success rate of valid entity extraction and correct forecasting output.
+    * Collect peer/mentor feedback on usability.
+
+---
+
+Let me know if you need these rephrased for a form or slide!
+
+
+Here’s a comprehensive response based on your internship experience, structured under the categories Barclays typically evaluates for intern reviews. Each section highlights your learning, growth, and contribution, followed by an overall comment.
+
+---
+
+### 💼 **Business Skills (Understanding the Role & Project Objectives)**
+
+During this internship, I developed a strong understanding of how security metric forecasting contributes to operational resilience and strategic decision-making. By aligning my work with business priorities, such as enhancing visibility into cyber risk trends, I ensured that my technical outputs were meaningful and actionable in a real-world enterprise setting.
+
+---
+
+### 🤝 **Presence and Communication (Team Interaction & Collaboration)**
+
+I regularly engaged with my mentor and team to clarify requirements and validate my project roadmap. I maintained open communication through weekly updates and actively sought feedback, which helped me stay aligned with expectations. This fostered a collaborative environment and taught me the importance of stakeholder communication in agile project delivery.
+
+---
+
+### 🧠 **Values and Mindset (RISES + Empower, Challenge, Drive)**
+
+I embodied Barclays’ values by staying committed to quality (Stewardship), respecting timelines and feedback (Respect), and continuously learning (Excellence). I empowered myself to try advanced forecasting models, challenged assumptions about data suitability, and drove progress independently—especially while integrating NLP into the chatbot under minimal supervision.
+
+---
+
+### ⚠️ **Risk and Controls (Understanding Challenges in Project)**
+
+Security metrics are often irregular and noisy, which posed challenges in applying traditional forecasting models. I learned to manage these risks by carefully selecting appropriate models like Theta, validating assumptions, and adding anomaly detection. These controls improved model reliability and ensured forecasts didn't mislead stakeholders.
+
+---
+
+### 🎯 **Role-Specific Objective (What I Did in My Project)**
+
+I led the end-to-end development of a forecasting dashboard for security metrics and integrated it with a voice-enabled chatbot. I designed and tested multiple models, developed anomaly detection, and built user interfaces in Streamlit. My work provides automation and insights for better metric monitoring and decision-making.
+
+---
+
+### 📝 **Overall Comment**
+
+This internship helped me grow both technically and professionally. I improved my forecasting, NLP, and full-stack development skills while learning how to map technical solutions to business needs. I gained confidence in presenting my work, managing ambiguity, and adapting to enterprise environments. I am grateful for this opportunity to contribute meaningfully to the team.
+
+---
+
+Let me know if you'd like this converted into a format suitable for direct form input or PDF.
+
