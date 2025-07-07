@@ -670,4 +670,314 @@ Would you also like:
 
 * A **PowerPoint-friendly table** layout of this content?
 * Or **roles and responsibilities mapping** (e.g., Data Engineer for Objective 1, AI Engineer for Objective 2)?
+import streamlit as st
+from gtts import gTTS
+import tempfile
+import os
+import speech_recognition as sr
+import uuid
+import win32com.client
+from win32com.client import constants
+import pythoncom
+import re
+from ctransformers import AutoModelForCausalLM
+from statsmodels.tsa.forecasting.theta import ThetaModel
+import pyodbc
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
+import pandas as pd
+import numpy as np
+import calendar
+import warnings
+warnings.filterwarnings("ignore")
 
+# Database connection
+conn = pyodbc.connect(
+    "DRIVER={ODBC Driver 17 for SQL Server};"
+    "SERVER=GBRDSMSQ5000035\\FUS_SQLVIRT_Dev;"
+    "DATABASE=FUSION_MI_DEV;"
+    "Trusted_Connection=yes;"
+)
+
+cursor = conn.cursor()
+
+class MetricDataProcessor:
+    def __init__(self):
+        self.current_date = datetime.now()
+        
+    def _parse_month_year(self, text: str) -> Optional[str]:
+        month_map = {m.lower(): i for i, m in enumerate(calendar.month_abbr) if m}
+        month_map.update({m.lower(): i for i, m in enumerate(calendar.month_name) if m}
+        patterns = [
+            r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s*'?(\d{2,4})",
+            r"(\d{1,2})[/-](\d{2,4})",
+            r"(\d{4})[/-](\d{1,2})"
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text.lower())
+            if match:
+                g = match.groups()
+                if len(g) == 2:
+                    if g[0] in month_map:
+                        month, year = month_map[g[0]], int(g[1])
+                    elif g[0].isdigit() and int(g[0]) in range(1, 13):
+                        month, year = int(g[0]), int(g[1])
+                    elif g[1].isdigit() and int(g[1]) in range(1, 13):
+                        month, year = int(g[1]), int(g[0])
+                    else:
+                        continue
+                    if year < 100:
+                        year += 2000
+                    return f"01/{month:02d}/{year}"
+        return None
+
+    def _extract_from_prompt(self, prompt: str, field: str, options: List[str]) -> Optional[str]:
+        for opt in options:
+            if re.search(rf"\b{re.escape(opt.lower())}\b", prompt.lower()):
+                return opt
+        return None
+
+    def extract_metric_info(self, prompt: str) -> Optional[Dict[str, Union[str, int, bool]]]:
+        # First get all unique metrics, levels and views from database
+        query = "SELECT DISTINCT MetricName, ReportingLevel, ReportinView FROM metricpredictmodel"
+        metadata = pd.read_sql(query, conn)
+        
+        result = {
+            "metric": None, "level": None, "view": None,
+            "date": None, "is_future": False,
+            "last_n_months": None, "next_n_months": None
+        }
+
+        prompt_lower = prompt.lower()
+        last_n = re.search(r"last\s*(\d+)\s*months?", prompt_lower)
+        next_n = re.search(r"next\s*(\d+)\s*months?", prompt_lower)
+
+        if last_n:
+            result["last_n_months"] = int(last_n.group(1))
+        elif next_n:
+            result["next_n_months"] = int(next_n.group(1))
+            result["is_future"] = True
+        else:
+            result["date"] = self._parse_month_year(prompt_lower)
+            if result["date"]:
+                dt = datetime.strptime(result["date"], "%d/%m/%Y")
+                if dt > self.current_date:
+                    result["is_future"] = True
+
+        metric_names = metadata['MetricName'].unique()
+        result["metric"] = self._extract_from_prompt(prompt_lower, "metric_name", metric_names)
+
+        result["level"] = self._extract_from_prompt(prompt_lower, "level", metadata['LevelName'].unique())
+        result["view"] = self._extract_from_prompt(prompt_lower, "view", metadata['ViewName'].unique())
+
+        if result["metric"] and (result["level"] is None or result["view"] is None):
+            mdata = metadata[metadata['MetricName'] == result["metric"]]
+            if not mdata.empty:
+                if result["level"] is None:
+                    result["level"] = mdata.iloc[0]["LevelName"]
+                if result["view"] is None:
+                    result["view"] = mdata.iloc[0]["ViewName"]
+
+        if not result["metric"] or not result["level"] or not result["view"]:
+            return None
+        if not result["last_n_months"] and not result["date"] and not result["next_n_months"]:
+            return None
+        return result
+
+    def _get_historical_data(self, metric: str, level: str, view: str) -> pd.DataFrame:
+        query = """
+            SELECT ReportingDate, MetricValue 
+            FROM metricpredictmodel 
+            WHERE MetricValue is not null 
+            AND MetricName=? AND ReportinView=? AND ReportingLevel=?
+        """
+        df = pd.read_sql(query, conn, params=[metric, level, view])
+        if df.empty:
+            return df
+        df['ReportingDate'] = pd.to_datetime(df['ReportingDate'])
+        df['MetricValue'] = df['MetricValue'].str.replace(r'%', '', regex=False).astype(float)
+        df.dropna(inplace=True)
+        df = df.sort_values('ReportingDate')
+        df = df.rename(columns={'ReportingDate': 'date', 'MetricValue': 'value'})
+        return df
+
+    def _forecast_with_theta(self, historical: pd.DataFrame, forecast_date: Optional[str], steps: Optional[int] = None) -> Dict:
+        try:
+            ts = historical.set_index("date")["value"]
+            model = ThetaModel(ts)
+            res = model.fit()
+            last_date = ts.index[-1]
+            if steps is None:
+                target = datetime.strptime(forecast_date, "%d/%m/%Y")
+                steps = (target.year - last_date.year) * 12 + target.month - last_date.month
+                if steps <= 0:
+                    return {"value": "PREDICTION_ERROR", "error": "Target date must be in future"}
+            forecast = res.forecast(steps=steps)
+            forecast = np.clip(forecast, 0, 100)
+            if forecast_date:
+                return {
+                    "value": round(forecast.iloc[-1], 2),
+                    "model_params": str(res.params),
+                    "last_historical_date": last_date.strftime("%d/%m/%Y"),
+                    "last_historical_value": ts.iloc[-1]
+                }
+            return {
+                "values": [round(v, 2) for v in forecast],
+                "model_params": str(res.params),
+                "last_historical_date": last_date.strftime("%d/%m/%Y"),
+                "last_historical_value": ts.iloc[-1]
+            }
+        except Exception as e:
+            return {"value": "PREDICTION_ERROR", "error": str(e)}
+
+    def get_metric_data(self, info: Dict) -> pd.DataFrame:
+        historical = self._get_historical_data(info["metric"], info["level"], info["view"])
+        if historical.empty:
+            return pd.DataFrame({"error": ["No historical data found."]})
+
+        if info["last_n_months"]:
+            start = self.current_date - timedelta(days=30 * info["last_n_months"])
+            result = historical[(historical["date"] >= start) & (historical["date"] <= self.current_date)]
+            return result[["date", "value"]]
+
+        if info["is_future"] and info["next_n_months"]:
+            forecast = self._forecast_with_theta(historical, None, steps=info["next_n_months"])
+            base_date = self.current_date + timedelta(days=30)
+            result = []
+            for i, val in enumerate(forecast["values"]):
+                date = (base_date + timedelta(days=30 * i)).replace(day=1)
+                result.append({
+                    "date": date.strftime("%d/%m/%Y"),
+                    "value": val,
+                    "model_params": forecast.get("model_params", ""),
+                    "last_historical_date": forecast.get("last_historical_date", ""),
+                    "last_historical_value": forecast.get("last_historical_value", "")
+                })
+            return pd.DataFrame(result)
+
+        if info["is_future"] and info["date"]:
+            forecast = self._forecast_with_theta(historical, info["date"])
+            return pd.DataFrame([{
+                "date": info["date"],
+                "value": forecast["value"],
+                "model_params": forecast.get("model_params", ""),
+                "last_historical_date": forecast.get("last_historical_date", ""),
+                "last_historical_value": forecast.get("last_historical_value", "")
+            }])
+
+        date_obj = datetime.strptime(info["date"], "%d/%m/%Y")
+        result = historical[historical["date"] == date_obj]
+        return result[["date", "value"]]
+
+def save_speech_to_wav(text, filename):
+    pythoncom.CoInitialize()
+    speaker = win32com.client.Dispatch("SAPI.SpVoice")
+    stream = win32com.client.Dispatch("SAPI.SpFileStream")
+    stream.Open(filename, 3)
+    speaker.AudioOutputStream = stream
+    speaker.Speak(text)
+    stream.Close()
+
+model = AutoModelForCausalLM.from_pretrained(
+    "llm1/tinyllama-1.1b-chat-v1.0.Q6_K.gguf",
+    model_type="llama"
+)
+
+# Initialize Streamlit app
+st.title("AI Assistant")
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+processor = MetricDataProcessor()
+
+input_text = st.chat_input("What's up?")
+if input_text:
+    with st.chat_message("user"):
+        st.markdown(input_text)
+    st.session_state.messages.append({"role": "user", "content": input_text})
+    
+    # First try to extract metric information
+    extracted = processor.extract_metric_info(input_text)
+    
+    if extracted:
+        df = processor.get_metric_data(extracted)
+        if "error" in df.columns:
+            response = df["error"].iloc[0]
+        else:
+            if extracted.get("next_n_months") or (extracted.get("date") and extracted["is_future"]):
+                response = "<br>".join(
+                    f"{row['date']}: {row['value']}%"
+                    for _, row in df.iterrows()
+                )
+            else:
+                response = "<br>".join(
+                    f"{row['date'].strftime('%d/%m/%Y')}: {row['value']}%"
+                    for _, row in df.iterrows()
+                )
+    else:
+        # If no metric info found, use the LLM
+        prompt = f"""Q: answer shortly (max limit 25 words). you are an AI assistant called bob. your work is to answer.\n\nQ: {input_text}\nA:"""
+        response = model(prompt)
+        response = response.strip()
+
+    # Generate speech and display response
+    temp_filename = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.wav")
+    save_speech_to_wav(response, temp_filename)
+    
+    with st.chat_message("assistant"):
+        st.markdown(response, unsafe_allow_html=True)
+        st.audio(temp_filename, format="audio/wav")
+    st.session_state.messages.append({"role": "assistant", "content": f"{response}"})
+
+if st.button("Start recording"):
+    r = sr.Recognizer()
+    with sr.Microphone() as source:
+        st.write("Speak now...")
+        audio_data = r.listen(source)
+    try:
+        input_text = r.recognize_google(audio_data)
+        if input_text:
+            with st.chat_message("user"):
+                st.markdown(input_text)
+            st.session_state.messages.append({"role": "user", "content": input_text})
+            
+            # Process the voice input the same way as text input
+            extracted = processor.extract_metric_info(input_text)
+            
+            if extracted:
+                df = processor.get_metric_data(extracted)
+                if "error" in df.columns:
+                    response = df["error"].iloc[0]
+                else:
+                    if extracted.get("next_n_months") or (extracted.get("date") and extracted["is_future"]):
+                        response = "<br>".join(
+                            f"{row['date']}: {row['value']}%"
+                            for _, row in df.iterrows()
+                        )
+                    else:
+                        response = "<br>".join(
+                            f"{row['date'].strftime('%d/%m/%Y')}: {row['value']}%"
+                            for _, row in df.iterrows()
+                        )
+            else:
+                prompt = f"""Q: answer shortly (max limit 25 words). you are an AI assistant called bob. your work is to answer.\n\nQ: {input_text}\nA:"""
+                response = model(prompt)
+                response = response.strip()
+            
+            temp_filename = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.wav")
+            save_speech_to_wav(response, temp_filename)
+            
+            with st.chat_message("assistant"):
+                st.markdown(response, unsafe_allow_html=True)
+                st.audio(temp_filename, format="audio/wav")
+            st.session_state.messages.append({"role": "assistant", "content": response})
+            
+    except sr.UnknownValueError:
+        st.write("Sorry, could not understand")
+    except sr.RequestError as e:
+        st.write(f"Could not request results; {e}")
