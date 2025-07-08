@@ -1428,3 +1428,170 @@ if st.button("Start recording"):
         st.write("Sorry, could not understand")
     except sr.RequestError as e:
         st.write(f"Could not request results; {e}")
+
+
+import seaborn as sns
+from sklearn.metrics import mean_absolute_error, r2_score
+
+# Step 1: Create full lag matrix
+def create_full_lag_feature_matrix(series: pd.Series) -> pd.DataFrame:
+    data = []
+    targets = []
+    dates = []
+    for i in range(1, len(series)):
+        input_series = series.iloc[:i]
+        target = series.iloc[i]
+        features = input_series.values[::-1]  # most recent first
+        feature_names = input_series.index[::-1].strftime('%Y-%m-%d')
+        row = pd.Series(features, index=feature_names)
+        data.append(row)
+        targets.append(target)
+        dates.append(series.index[i])
+    return pd.DataFrame(data), pd.Series(targets, index=dates)
+
+X_full, y_full = create_full_lag_feature_matrix(train)
+X_full = X_full.fillna(0)
+
+# Step 2: Walk-forward train surrogate
+in_sample_preds = []
+for i in tqdm(range(1, len(train))):
+    y_subset = train.iloc[:i]
+    m = ThetaModel(y_subset, period=1)
+    fit = m.fit()
+    pred = fit.forecast(steps=1).iloc[0]
+    in_sample_preds.append(pred)
+
+X_aligned = X_full.iloc[:len(in_sample_preds)]
+surrogate_model = LGBMRegressor()
+surrogate_model.fit(X_aligned, in_sample_preds)
+
+# Step 3: Create input for SHAP explanation
+latest_input_vector = pd.Series(train.values[::-1], index=train.index[::-1].strftime('%Y-%m-%d')).to_frame().T
+latest_input_vector = latest_input_vector.reindex(columns=X_aligned.columns, fill_value=0)
+
+explainer = shap.Explainer(surrogate_model)
+shap_values = explainer(latest_input_vector)
+
+# Step 4: Create SHAP DataFrame
+shap_df = pd.DataFrame({
+    'Date': latest_input_vector.columns,
+    'Value': latest_input_vector.values.flatten(),
+    'SHAP Value': shap_values.values[0],
+})
+shap_df['|SHAP|'] = shap_df['SHAP Value'].abs()
+top_shap = shap_df.sort_values('|SHAP|', ascending=False).head(10)
+
+# Step 5: Show in Streamlit
+st.subheader("📊 SHAP Analysis by Historical Date (Theta Forecast)")
+st.dataframe(top_shap[['Date', 'Value', 'SHAP Value']])
+
+fig, ax = plt.subplots(figsize=(10, 5))
+sns.barplot(data=top_shap, x='Date', y='SHAP Value', palette='coolwarm', ax=ax)
+plt.xticks(rotation=45)
+plt.title("Top 10 Influential Dates on Theta Forecast (SHAP)")
+plt.tight_layout()
+st.pyplot(fig)
+
+    from sklearn.linear_model import LinearRegression
+    from dateutil.relativedelta import relativedelta
+    import matplotlib.pyplot as plt
+
+    y = train  # Original series
+    steps = steps
+
+    t = np.arange(len(y)).reshape(-1, 1)
+    trend_model = LinearRegression().fit(t, y.values)
+
+    trend_values = []
+    ses_values = []
+    final_forecast = []
+
+    for h in range(1, steps + 1):
+        t_next = np.array([[len(y) + h - 1]])
+        trend = trend_model.predict(t_next)[0]
+        theta_pred = forecast.iloc[h - 1]
+        ses = 2 * theta_pred - trend
+
+        trend_values.append(trend)
+        ses_values.append(ses)
+        final_forecast.append(theta_pred)
+
+    last_date = y.index[-1]
+    future_dates = [last_date + relativedelta(months=i+1) for i in range(steps)]
+
+    # Optional: Show plot in Streamlit
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(future_dates, trend_values, label='Trend (θ=0)', marker='o', color='blue')
+    ax.plot(future_dates, ses_values, label='SES Component (θ=2)', marker='o', color='green')
+    ax.plot(future_dates, final_forecast, label='Final Theta Forecast', marker='o', color='red')
+    ax.set_title("Theta Model Forecast Decomposition (Next 5 Months)")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Forecasted Percentage")
+    ax.legend()
+    ax.grid(True)
+    st.pyplot(fig)
+def create_lag_features(series, window=5):
+    df_lag = pd.DataFrame()
+    for i in range(1, window + 1):
+        df_lag[f'lag_{i}'] = series.shift(i)
+    df_lag['target'] = series
+    return df_lag.dropna()
+
+lag_window = 5
+df_lagged = create_lag_features(train, window=lag_window)
+X = df_lagged.drop(columns='target')
+
+# Walk-forward predictions using Theta
+from lightgbm import LGBMRegressor
+from tqdm import tqdm
+from sklearn.metrics import mean_absolute_error, r2_score
+import shap
+
+in_sample_preds = []
+for i in tqdm(range(lag_window, len(train))):
+    y_subset = train.iloc[:i]
+    m = ThetaModel(y_subset, period=1)
+    fit = m.fit()
+    pred = fit.forecast(steps=1).iloc[0]
+    in_sample_preds.append(pred)
+
+X = X.iloc[:len(in_sample_preds)]  # Align size
+surrogate_model = LGBMRegressor()
+surrogate_model.fit(X, in_sample_preds)
+
+# STEP 2: SHAP Explanation for Forecasted Point
+latest_lags = train.iloc[-lag_window:].values[::-1]
+latest_input = pd.DataFrame([latest_lags], columns=[f'lag_{i}' for i in range(1, lag_window + 1)])
+
+explainer = shap.Explainer(surrogate_model)
+shap_values = explainer(latest_input)
+
+surrogate_pred = surrogate_model.predict(latest_input)[0]
+base_val = shap_values.base_values[0]
+
+explain_df = pd.DataFrame({
+    'Lag Feature': latest_input.columns,
+    'Lag Value': latest_input.values.flatten(),
+    'SHAP Value': shap_values.values[0],
+    'Contribution': latest_input.values.flatten() * shap_values.values[0]
+})
+
+# Accuracy vs Theta (in-sample)
+mae = mean_absolute_error(in_sample_preds, surrogate_model.predict(X))
+r2 = r2_score(in_sample_preds, surrogate_model.predict(X))
+
+# STREAMLIT OUTPUT
+st.subheader("🔍 Surrogate SHAP Explanation (Theta Forecast Driver)")
+st.markdown(f"**Surrogate Model Prediction (mimicking Theta):** {surrogate_pred:.2f}")
+st.markdown(f"**SHAP Base Value:** {base_val:.2f}")
+st.markdown(f"**MAE vs Theta:** {mae:.2f} &nbsp;&nbsp;&nbsp; **R² Score:** {r2:.3f}")
+st.dataframe(explain_df)
+
+# Plots
+st.subheader("📉 SHAP Visuals")
+shap.plots.waterfall(shap_values[0], max_display=lag_window, show=False)
+st.pyplot(bbox_inches='tight')
+
+shap.plots.beeswarm(shap_values, show=False)
+st.pyplot(bbox_inches='tight')
+
