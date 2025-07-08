@@ -1220,3 +1220,211 @@ for prompt in test_prompts:
         print(df.to_string(index=False))
     else:
         print("❌ Could not extract required information.")
+
+import streamlit as st
+from gtts import gTTS
+import tempfile
+import os
+import speech_recognition as sr
+import uuid
+import win32com.client
+from win32com.client import constants
+import pythoncom
+import re
+from ctransformers import AutoModelForCausalLM
+from statsmodels.tsa.forecasting.theta import ThetaModel
+import pyodbc
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+import pandas as pd
+import numpy as np
+
+# Database connection
+conn = pyodbc.connect(
+    "DRIVER={ODBC Driver 17 for SQL Server};"
+    "SERVER=GBRDSMSQ5000035\\FUS_SQLVIRT_Dev;"
+    "DATABASE=FUSION_MI_DEV;"
+    "Trusted_Connection=yes;"
+)
+
+# Load LLM model
+model = AutoModelForCausalLM.from_pretrained(
+    "llm1/tinyllama-1.1b-chat-v1.0.Q6_K.gguf",
+    model_type="llama"
+)
+
+# Initialize session state
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# Helper functions
+def save_speech_to_wav(text, filename):
+    pythoncom.CoInitialize()
+    speaker = win32com.client.Dispatch("SAPI.SpVoice")
+    stream = win32com.client.Dispatch("SAPI.SpFileStream")
+    stream.Open(filename, 3)
+    speaker.AudioOutputStream = stream
+    speaker.Speak(text)
+    stream.Close()
+
+def run_forecast(metric, level, view, steps):
+    query = """
+        SELECT ReportingDate, MetricValue 
+        FROM metricpredictmodel 
+        WHERE MetricValue is not null 
+        AND MetricName=? AND ReportinView=? AND ReportingLevel=?
+    """
+    df = pd.read_sql(query, conn, params=[metric, level, view])
+    if df.empty:
+        return None, "no data found"
+    df['ReportingDate'] = pd.to_datetime(df['ReportingDate'])
+    df['MetricValue'] = df['MetricValue'].str.replace(r'%', '', regex=False).astype(float)
+    df.dropna(inplace=True)
+    df = df.sort_values('ReportingDate')
+    df.set_index('ReportingDate', inplace=True)
+    train = df['MetricValue']
+    fit_model = ThetaModel(train, period=1).fit()
+    steps = int(steps)
+    forecast = fit_model.forecast(steps=steps)
+    forecast = np.clip(forecast, 0, 100)
+    last_date = df.index[-1]
+    future_dates = [last_date + relativedelta(months=+1) for _ in range(steps)]
+    forecast_df = pd.DataFrame({'Date': future_dates, 'ForecastedValue': forecast.round(2)})
+    return forecast_df, None
+
+def get_metric_info():
+    query = "SELECT DISTINCT MetricName, MetricID, ReportingLevel, ReportinView FROM metricpredictmodel"
+    df = pd.read_sql(query, conn)
+    return df
+
+def extract_forecast_period(text):
+    # Look for patterns like "next 5 months" or "for 3 months"
+    matches = re.findall(r'(?:next|for)\s+(\d+)\s+months?', text, re.IGNORECASE)
+    return int(matches[0]) if matches else 6  # default to 6 months if not specified
+
+def extract_date(text):
+    # Look for month-year patterns like "January 2024" or "jan 2025"
+    month_pattern = r'(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}'
+    matches = re.findall(month_pattern, text, re.IGNORECASE)
+    if matches:
+        try:
+            return datetime.strptime(matches[0], '%B %Y')
+        except:
+            try:
+                return datetime.strptime(matches[0], '%b %Y')
+            except:
+                return None
+    return None
+
+def process_user_query(input_text):
+    input_text = input_text.lower()
+    metric_info = get_metric_info()
+    
+    # Check if query contains metric information
+    found_metric = None
+    found_level = None
+    found_view = None
+    
+    # First try to match by MetricName
+    for _, row in metric_info.iterrows():
+        if row['MetricName'].lower() in input_text and row['ReportingLevel'].lower() in input_text and row['ReportinView'].lower()in input_text:
+            found_metric = row['MetricName']
+            found_level = row['ReportingLevel']
+            found_view = row['ReportinView']
+            break
+    
+    # If not found by name, try by ID
+    if not found_metric:
+        for _, row in metric_info.iterrows():
+            if str(row['MetricID']).lower() in input_text and row['ReportingLevel'].lower() in input_text and row['ReportinView'].lower()in input_text:
+                found_metric = row['MetricName']
+                found_level = row['ReportingLevel']
+                found_view = row['ReportinView']
+                break
+    
+    if found_metric:
+        query_date = extract_date(input_text)
+        forecast_period = extract_forecast_period(input_text)
+        
+        if query_date:
+            # Check if date is after May 2025 (needs forecast)
+            if query_date > datetime(2025, 5, 1):
+                forecast_df, error = run_forecast(found_metric, found_level, found_view, forecast_period)
+                if error:
+                    return f"Error: {error}"
+                else:
+                    return f"Forecast for {found_metric} ({found_level}, {found_view}):\n" + forecast_df.to_string(index=False)
+            else:
+                # Fetch historical data
+                query = """
+                    SELECT ReportingDate, MetricValue 
+                    FROM metricpredictmodel 
+                    WHERE MetricName=? AND ReportingLevel=? AND ReportinView=?
+                    AND ReportingDate BETWEEN ? AND ?
+                """
+                end_date = query_date + relativedelta(months=+forecast_period)
+                df = pd.read_sql(query, conn, params=[found_metric, found_level, found_view, query_date, end_date])
+                if df.empty:
+                    return f"No data found for {found_metric} between {query_date.strftime('%B %Y')} and {end_date.strftime('%B %Y')}"
+                return f"Historical data for {found_metric} ({found_level}, {found_view}):\n" + df.to_string(index=False)
+    
+    # If no metric found or incomplete information, use LLM for general response
+    prompt = f"""Q: answer shortly (max limit 25 words). you are an AI assistant called bob. your work is to answer.\n\nQ: {input_text}\nA:"""
+    response = model(prompt)
+    return response.strip()
+
+# UI Setup
+st.title("AI Assistant")
+
+# Display chat history
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# Text input
+input_text = st.chat_input("What's up?")
+if input_text:
+    # Process user input
+    response = process_user_query(input_text)
+    
+    # Generate speech and display
+    temp_filename = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.wav")
+    save_speech_to_wav(response, temp_filename)
+    st.audio(temp_filename, format="audio/wav")
+    
+    # Update chat history
+    with st.chat_message("user"):
+        st.markdown(input_text)
+    st.session_state.messages.append({"role": "user", "content": input_text})
+    
+    with st.chat_message("assistant"):
+        st.markdown(response)
+    st.session_state.messages.append({"role": "assistant", "content": response})
+
+# Voice input
+if st.button("Start recording"):
+    r = sr.Recognizer()
+    with sr.Microphone() as source:
+        st.write("Speak now...")
+        audio_data = r.listen(source)
+    try:
+        input_text = r.recognize_google(audio_data)
+        if input_text:
+            response = process_user_query(input_text)
+            
+            temp_filename = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.wav")
+            save_speech_to_wav(response, temp_filename)
+            st.audio(temp_filename, format="audio/wav")
+            
+            with st.chat_message("user"):
+                st.markdown(input_text)
+            st.session_state.messages.append({"role": "user", "content": input_text})
+
+            with st.chat_message("assistant"):
+                st.markdown(response)
+            st.session_state.messages.append({"role": "assistant", "content": response})
+            
+    except sr.UnknownValueError:
+        st.write("Sorry, could not understand")
+    except sr.RequestError as e:
+        st.write(f"Could not request results; {e}")
