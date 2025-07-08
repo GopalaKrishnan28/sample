@@ -981,3 +981,242 @@ if st.button("Start recording"):
         st.write("Sorry, could not understand")
     except sr.RequestError as e:
         st.write(f"Could not request results; {e}")
+
+
+import pandas as pd
+from datetime import datetime, timedelta
+import random
+import re
+from typing import Optional, Dict, Union, List
+import calendar
+from statsmodels.tsa.forecasting.theta import ThetaModel
+import warnings
+import pyodbc
+warnings.filterwarnings("ignore")
+
+class MetricDataProcessor:
+    def __init__(self):
+        # Initialize database connection
+        self.conn = pyodbc.connect(
+            "DRIVER={ODBC Driver 17 for SQL Server};"
+            "SERVER=GBRDSMSQ5000035\\FUS_SQLVIRT_Dev;"
+            "DATABASE=FUSION_MI_DEV;"
+            "Trusted_Connection=yes;"
+        )
+        
+        # Fetch distinct metrics metadata from database
+        self.metrics_metadata = self._fetch_metrics_metadata()
+        self.time_series_data = self._fetch_time_series_data()
+        self.current_date = datetime(2025, 5, 1)
+
+    def _fetch_metrics_metadata(self) -> pd.DataFrame:
+        """Fetch distinct metric names, levels, and views from database"""
+        query = """
+        SELECT DISTINCT 
+            MetricName as metric_name,
+            ReportingLevel as level,
+            ReportingView as view
+        FROM metricpredictmodel
+        WHERE MetricName IS NOT NULL 
+          AND ReportingLevel IS NOT NULL 
+          AND ReportingView IS NOT NULL
+        """
+        return pd.read_sql(query, self.conn)
+
+    def _fetch_time_series_data(self) -> pd.DataFrame:
+        """Fetch time series data from database"""
+        query = """
+        SELECT 
+            MetricName as metric_name,
+            ReportingLevel as level,
+            ReportingView as view,
+            ReportingDate as date,
+            MetricValue as value
+        FROM metricpredictmodel
+        WHERE MetricValue IS NOT NULL
+        """
+        df = pd.read_sql(query, self.conn)
+        df['date'] = pd.to_datetime(df['date'])
+        return df
+
+    def _parse_month_year(self, text: str) -> Optional[str]:
+        month_map = {m.lower(): i for i, m in enumerate(calendar.month_abbr) if m}
+        month_map.update({m.lower(): i for i, m in enumerate(calendar.month_name) if m})
+        patterns = [
+            r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s*'?(\d{2,4})",
+            r"(\d{1,2})[/-](\d{2,4})",
+            r"(\d{4})[/-](\d{1,2})"
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text.lower())
+            if match:
+                g = match.groups()
+                if len(g) == 2:
+                    if g[0] in month_map:
+                        month, year = month_map[g[0]], int(g[1])
+                    elif g[0].isdigit() and int(g[0]) in range(1, 13):
+                        month, year = int(g[0]), int(g[1])
+                    elif g[1].isdigit() and int(g[1]) in range(1, 13):
+                        month, year = int(g[1]), int(g[0])
+                    else:
+                        continue
+                    if year < 100:
+                        year += 2000
+                    return f"01/{month:02d}/{year}"
+        return None
+
+    def _extract_from_prompt(self, prompt: str, field: str, options: List[str]) -> Optional[str]:
+        for opt in options:
+            if re.search(rf"\b{re.escape(opt.lower())}\b", prompt):
+                return opt
+        return None
+
+    def extract_metric_info(self, prompt: str) -> Optional[Dict[str, Union[str, int, bool]]]:
+        result = {
+            "metric": None, "level": None, "view": None,
+            "date": None, "is_future": False,
+            "last_n_months": None, "next_n_months": None
+        }
+
+        prompt_lower = prompt.lower()
+        last_n = re.search(r"last\s*(\d+)\s*months?", prompt_lower)
+        next_n = re.search(r"next\s*(\d+)\s*months?", prompt_lower)
+
+        if last_n:
+            result["last_n_months"] = int(last_n.group(1))
+        elif next_n:
+            result["next_n_months"] = int(next_n.group(1))
+            result["is_future"] = True
+        else:
+            result["date"] = self._parse_month_year(prompt_lower)
+            if result["date"]:
+                dt = datetime.strptime(result["date"], "%d/%m/%Y")
+                if dt > self.current_date:
+                    result["is_future"] = True
+
+        metric_names = self.metrics_metadata['metric_name'].unique()
+
+        result["metric"] = self._extract_from_prompt(prompt_lower, "metric_name", metric_names)
+        result["level"] = self._extract_from_prompt(prompt_lower, "level", self.metrics_metadata['level'].unique())
+        result["view"] = self._extract_from_prompt(prompt_lower, "view", self.metrics_metadata['view'].unique())
+
+        if result["metric"] and (result["level"] is None or result["view"] is None):
+            mdata = self.metrics_metadata[
+                (self.metrics_metadata['metric_name'] == result["metric"])]
+            if not mdata.empty:
+                if result["level"] is None:
+                    result["level"] = mdata.iloc[0]["level"]
+                if result["view"] is None:
+                    result["view"] = mdata.iloc[0]["view"]
+
+        if not result["metric"] or not result["level"] or not result["view"]:
+            return None
+        if not result["last_n_months"] and not result["date"] and not result["next_n_months"]:
+            return None
+        return result
+
+    def _get_historical_data(self, metric: str, level: str, view: str) -> pd.DataFrame:
+        return self.time_series_data[
+            (self.time_series_data['metric_name'] == metric) &
+            (self.time_series_data['level'] == level) &
+            (self.time_series_data['view'] == view)
+        ].sort_values("date")
+
+    def _forecast_with_theta(self, historical: pd.DataFrame, forecast_date: Optional[str], steps: Optional[int] = None) -> Dict:
+        try:
+            ts = historical.set_index("date")["value"]
+            model = ThetaModel(ts)
+            res = model.fit()
+            last_date = ts.index[-1]
+            if steps is None:
+                target = datetime.strptime(forecast_date, "%d/%m/%Y")
+                steps = (target.year - last_date.year) * 12 + target.month - last_date.month
+                if steps <= 0:
+                    return {"value": "PREDICTION_ERROR", "error": "Target date must be in future"}
+            forecast = res.forecast(steps=steps)
+            if forecast_date:
+                return {
+                    "value": round(forecast.iloc[-1]),
+                    "model_params": str(res.params),
+                    "last_historical_date": last_date.strftime("%d/%m/%Y"),
+                    "last_historical_value": ts.iloc[-1]
+                }
+            return {
+                "values": [round(v) for v in forecast],
+                "model_params": str(res.params),
+                "last_historical_date": last_date.strftime("%d/%m/%Y"),
+                "last_historical_value": ts.iloc[-1]
+            }
+        except Exception as e:
+            return {"value": "PREDICTION_ERROR", "error": str(e)}
+
+    def get_metric_data(self, info: Dict) -> pd.DataFrame:
+        historical = self._get_historical_data(info["metric"], info["level"], info["view"])
+        if historical.empty:
+            return pd.DataFrame({"error": ["No historical data found."]})
+
+        if info["last_n_months"]:
+            start = self.current_date - timedelta(days=30 * info["last_n_months"])
+            result = historical[(historical["date"] >= start) & (historical["date"] <= self.current_date)]
+            return result[["metric_name", "level", "view", "date", "value"]]
+
+        if info["is_future"] and info["next_n_months"]:
+            forecast = self._forecast_with_theta(historical, None, steps=info["next_n_months"])
+            base_date = self.current_date + timedelta(days=30)
+            result = []
+            for i, val in enumerate(forecast["values"]):
+                date = (base_date + timedelta(days=30 * i)).replace(day=1)
+                result.append({
+                    "metric_name": info["metric"],
+                    "level": info["level"],
+                    "view": info["view"],
+                    "date": date.strftime("%d/%m/%Y"),
+                    "value": val,
+                    "model_params": forecast.get("model_params", ""),
+                    "last_historical_date": forecast.get("last_historical_date", ""),
+                    "last_historical_value": forecast.get("last_historical_value", "")
+                })
+            return pd.DataFrame(result)
+
+        if info["is_future"] and info["date"]:
+            forecast = self._forecast_with_theta(historical, info["date"])
+            return pd.DataFrame([{
+                "metric_name": info["metric"],
+                "level": info["level"],
+                "view": info["view"],
+                "date": info["date"],
+                "value": forecast["value"],
+                "model_params": forecast.get("model_params", ""),
+                "last_historical_date": forecast.get("last_historical_date", ""),
+                "last_historical_value": forecast.get("last_historical_value", "")
+            }])
+
+        date_obj = datetime.strptime(info["date"], "%d/%m/%Y")
+        result = historical[historical["date"] == date_obj]
+        return result[["metric_name", "level", "view", "date", "value"]]
+
+
+# ---------------- Example Usage ----------------
+
+processor = MetricDataProcessor()
+test_prompts = [
+    "Show sales_volume at national level for hr view in march 2024",
+    "Display customer_count data for regional cio view on jan 2025",
+    "What will be the inventory for product hr view in dec 2025?",
+    "Show me last 10 months data for customer_count cio view regional level",
+    "Revenue for store view in 05/2024",
+    "Give me revenue cso data for Feb'24",
+    "Predict sales_volume for national hr view in June 2025",
+    "Forecast revenue for product hr view in December 2026",
+    "Predict the customer_count regional level cio view for next 5 months"
+]
+
+for prompt in test_prompts:
+    print(f"\n📌 Prompt: {prompt}")
+    extracted = processor.extract_metric_info(prompt)
+    if extracted:
+        print("🔍 Extracted:", {k: v for k, v in extracted.items() if v})
+        df = processor.get_metric_data(extracted)
+        print(df.to_string(index=False))
+    else:
+        print("❌ Could not extract required information.")
