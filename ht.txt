@@ -1630,6 +1630,31 @@ if is_process_running():
 else:
     st.markdown("🔴 **Status:** Not running")
 
+from llama_cpp import Llama
+
+# Load the TinyLlama GGUF model
+llm = Llama(
+    model_path="./models/tinyllama/tinyllama-1.1b-chat-v1.0.Q6_K.gguf",
+    n_ctx=512,             # context window
+    n_threads=4,           # adjust to your CPU
+    n_batch=128,           # token batch size
+    use_mlock=True         # optional: lock model in memory
+)
+
+# Prompt (chat-style)
+prompt = """<|system|>
+You are a helpful assistant.
+<|user|>
+What is the capital of France?
+<|assistant|>"""
+
+# Generate
+output = llm(prompt, max_tokens=100, temperature=0.7, top_p=0.9)
+
+# Print result
+print(output['choices'][0]['text'].strip())
+
+
 
 # eye_mouse.py
 import cv2
